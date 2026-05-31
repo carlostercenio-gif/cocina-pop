@@ -188,6 +188,19 @@
   .modal-cancel { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px; font-family:'DM Sans',sans-serif; font-size:15px; cursor:pointer; }
   .modal-delete { background:var(--red); color:white; border:none; border-radius:var(--radius-sm); padding:14px; font-family:'Syne',sans-serif; font-size:15px; font-weight:700; cursor:pointer; }
 
+
+  /* BOLSA SELECTOR */
+  .bolsa-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .bolsa-btn { background:var(--surface2); border:2px solid var(--border); border-radius:var(--radius-sm); padding:14px 8px; text-align:center; cursor:pointer; transition:all 0.2s; color:var(--muted); font-size:12px; font-family:'DM Sans',sans-serif; }
+  .bolsa-btn .bolsa-icon { font-size:24px; display:block; margin-bottom:6px; }
+  .bolsa-btn .bolsa-name { display:block; font-weight:600; font-size:13px; margin-bottom:2px; color:var(--text); }
+  .bolsa-btn .bolsa-saldo { display:block; font-size:11px; }
+  .bolsa-btn.selected-op { border-color:var(--green); background:rgba(76,201,240,0.1); }
+  .bolsa-btn.selected-per { border-color:var(--yellow); background:rgba(248,150,30,0.1); }
+  .bolsa-btn.selected-aho { border-color:var(--accent); background:rgba(247,37,133,0.1); }
+  .bolsa-group { display:none; }
+  .bolsa-group.show { display:block; }
+
   /* EMPTY */
   .empty { text-align:center; padding:40px 20px; color:var(--muted); }
   .empty-icon { font-size:48px; margin-bottom:12px; }
@@ -355,6 +368,27 @@
     <div class="cat-grid" id="catGrid"></div>
   </div>
 
+  <div class="form-group bolsa-group" id="bolsaGroup">
+    <label class="form-label">¿De qué bolsa sale?</label>
+    <div class="bolsa-grid">
+      <div class="bolsa-btn" id="bolsa-op" onclick="selectBolsa('op',this)">
+        <span class="bolsa-icon">🏪</span>
+        <span class="bolsa-name">Operativo</span>
+        <span class="bolsa-saldo" id="bolsa-op-saldo" style="color:var(--green)">$0</span>
+      </div>
+      <div class="bolsa-btn" id="bolsa-per" onclick="selectBolsa('per',this)">
+        <span class="bolsa-icon">🏠</span>
+        <span class="bolsa-name">Personal</span>
+        <span class="bolsa-saldo" id="bolsa-per-saldo" style="color:var(--yellow)">$0</span>
+      </div>
+      <div class="bolsa-btn" id="bolsa-aho" onclick="selectBolsa('aho',this)">
+        <span class="bolsa-icon">🐖</span>
+        <span class="bolsa-name">Ahorro</span>
+        <span class="bolsa-saldo" id="bolsa-aho-saldo" style="color:var(--accent)">$0</span>
+      </div>
+    </div>
+  </div>
+
   <button class="btn-primary" onclick="registrar()">Registrar</button>
   <button class="btn-secondary" onclick="limpiarForm()">Limpiar</button>
 </div>
@@ -514,6 +548,7 @@ let state = {
 };
 let currentType = 'ingreso';
 let selectedCat = null;
+let selectedBolsa = null;
 let txIdAEliminar = null;
 const DIAS = ['Lun','Mar','Mié','Jue','Vie'];
 const CATEGORIAS = {
@@ -611,7 +646,11 @@ function updateDashboard(){
       const dow=d.getDay();
       if(dow>=1&&dow<=5&&d>=weekStart) ventasSemana[dow-1]+=tx.amount;
     } else {
-      op-=tx.amount;
+      // gastos y compras: usar bolsa guardada, default operativo
+      const bolsa=tx.bolsa||'op';
+      if(bolsa==='op') op-=tx.amount;
+      else if(bolsa==='per') per-=tx.amount;
+      else if(bolsa==='aho') aho-=tx.amount;
     }
   });
 
@@ -705,12 +744,14 @@ function txRow(tx, showDelete){
   const d=new Date(tx.date);
   const label=tx.desc||tx.cat||tx.type;
   const isIncome=tx.type==='ingreso';
+  const bolsaLabels={op:'🏪 Operativo',per:'🏠 Personal',aho:'🐖 Ahorro'};
+  const bolsaTag=(!isIncome&&tx.bolsa)?` · ${bolsaLabels[tx.bolsa]||''}`:'' ;
   const delBtn=showDelete?`<button class="tx-delete" onclick="abrirModal(${tx.id})">🗑️</button>`:'';
   return `<div class="tx-item">
     <div class="tx-icon" style="background:${colors[tx.type]}">${icons[tx.type]}</div>
     <div class="tx-info">
       <div class="tx-name">${label}</div>
-      <div class="tx-cat">${d.toLocaleDateString('es-AR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+      <div class="tx-cat">${d.toLocaleDateString('es-AR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}${bolsaTag}</div>
     </div>
     <div class="tx-amount ${isIncome?'income':'expense'}">${isIncome?'+':'-'}${fmt(tx.amount)}</div>
     ${delBtn}
@@ -752,10 +793,49 @@ function confirmarEliminar(){
 // CARGAR
 // ============================================================
 function selectType(type,el){
-  currentType=type; selectedCat=null;
+  currentType=type; selectedCat=null; selectedBolsa=null;
   document.querySelectorAll('.type-btn').forEach(b=>b.classList.remove('selected'));
+  document.querySelectorAll('.bolsa-btn').forEach(b=>b.className='bolsa-btn');
   el.classList.add('selected');
   renderCats(type);
+  // Mostrar selector de bolsa solo para gastos y compras
+  const bg=document.getElementById('bolsaGroup');
+  if(type==='gasto'||type==='compra'){
+    bg.classList.add('show');
+    actualizarSaldosBolsa();
+  } else {
+    bg.classList.remove('show');
+  }
+}
+
+function actualizarSaldosBolsa(){
+  // Calcular saldos actuales igual que en dashboard
+  const cfg=state.config;
+  const saldoInicial=(cfg.efectivo||0)+(cfg.mp||0)+(cfg.banco||0);
+  let op=saldoInicial*(cfg.pctOp/100);
+  let per=saldoInicial*(cfg.pctPer/100);
+  let aho=saldoInicial*(cfg.pctAho/100);
+  state.transactions.forEach(tx=>{
+    if(tx.type==='ingreso'){
+      op+=(tx.amount*cfg.pctOp)/100;
+      per+=(tx.amount*cfg.pctPer)/100;
+      aho+=(tx.amount*cfg.pctAho)/100;
+    } else {
+      const bolsa=tx.bolsa||'op';
+      if(bolsa==='op') op-=tx.amount;
+      else if(bolsa==='per') per-=tx.amount;
+      else if(bolsa==='aho') aho-=tx.amount;
+    }
+  });
+  document.getElementById('bolsa-op-saldo').textContent=fmt(Math.max(0,op));
+  document.getElementById('bolsa-per-saldo').textContent=fmt(Math.max(0,per));
+  document.getElementById('bolsa-aho-saldo').textContent=fmt(Math.max(0,aho));
+}
+
+function selectBolsa(bolsa,el){
+  selectedBolsa=bolsa;
+  document.querySelectorAll('.bolsa-btn').forEach(b=>b.className='bolsa-btn');
+  el.classList.add('selected-'+bolsa);
 }
 
 function renderCats(type){
@@ -776,7 +856,8 @@ function registrar(){
   const monto=parseFloat(document.getElementById('montoInput').value);
   const desc=document.getElementById('descInput').value.trim();
   if(!monto||monto<=0){ showToast('⚠️ Ingresá un monto válido',true); return; }
-  const tx={ id:Date.now(), type:currentType, amount:monto, cat:selectedCat, desc:desc, date:new Date().toISOString() };
+  if((currentType==='gasto'||currentType==='compra')&&!selectedBolsa){ showToast('⚠️ Seleccioná de qué bolsa sale',true); return; }
+  const tx={ id:Date.now(), type:currentType, amount:monto, cat:selectedCat, desc:desc, bolsa:selectedBolsa, date:new Date().toISOString() };
   state.transactions.push(tx);
   save();
   updateDashboard();
@@ -788,8 +869,9 @@ function registrar(){
 function limpiarForm(){
   document.getElementById('montoInput').value='';
   document.getElementById('descInput').value='';
-  selectedCat=null;
+  selectedCat=null; selectedBolsa=null;
   document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('selected'));
+  document.querySelectorAll('.bolsa-btn').forEach(b=>b.className='bolsa-btn');
 }
 
 // ============================================================
